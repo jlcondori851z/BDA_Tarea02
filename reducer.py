@@ -11,28 +11,27 @@ for line in sys.stdin:
     if not line:
         continue
 
-    # Esperamos: fichero \t palabra \t 1
-    parts = line.split("\t")
-    if len(parts) != 3:
+    # Esperamos: key \t 1
+    parts = line.split("\t", 1)
+    if len(parts) != 2:
         continue
 
-    file_name, word, count_str = parts
-    key = f"{file_name}\t{word}"
-
+    key, count_str = parts
     try:
         count = int(count_str)
     except ValueError:
         continue
 
-    # Hadoop ordena por clave antes de llegar al reducer
     if current_key == key:
         current_count += count
     else:
         if current_key is not None:
-            print(f"{current_key}\t{current_count}")
+            file_name, word = current_key.split("|||", 1)
+            print(f"{file_name}\t{word}\t{current_count}")
         current_key = key
         current_count = count
 
 # Última clave
 if current_key is not None:
-    print(f"{current_key}\t{current_count}")
+    file_name, word = current_key.split("|||", 1)
+    print(f"{file_name}\t{word}\t{current_count}")
