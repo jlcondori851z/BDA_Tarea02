@@ -5,67 +5,90 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.io.Text;
+
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.Mapper;
 import org.apache.hadoop.mapreduce.Reducer;
+
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
+import org.apache.hadoop.mapreduce.lib.input.FileSplit;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 
-public class QuotationAnalyzer {
+public class WordCountByFile {
 
-  public static class IncreaseQuotationFilterMapper extends Mapper < Object, Text, Text, IntWritable > {
+  public static class WordCountMapper extends Mapper < Object, Text, Text, IntWritable > {
+
+    private final static IntWritable one = new IntWritable(1);
+    private Text wordKey = new Text();
 
     // MapReduce invocará a este método una vez por cada línea del fichero
     public void map(Object key, Text value, Context context) throws IOException,
     InterruptedException {
 
-      // Cogemos la línea que llega como parámetro, la convertimos a String
-      // y la dividimos en los distintos bloques de información
-      String valueString = value.toString();
-      String[] dataOfTheQuotation = valueString.split(";");
+      // Obtener el nombre del fichero (para contar por fichero)
+      String fileName = ((FileSplit) context.getInputSplit()).getPath().getName();
 
-      // Tomamos los valores que nos interesan: nombre de la empresa y cotizaciones
-      float currentQuotation = Float.parseFloat(dataOfTheQuotation[2]);
-      float lastQuotation = Float.parseFloat(dataOfTheQuotation[3]);
-      String companyName = dataOfTheQuotation[1];
+      // Leer la línea
+      String line = value.toString();
 
-      // Realizamos el filtro: si la cotización crece, enviamos una pareja (nombre de la empresa, 1)
-      if (currentQuotation > lastQuotation)
-        context.write(new Text(SingleCountryData[companyName]), new IntWritable(1));
+      // Ignorar cabecera del CSV
+      if (line.startsWith("game_id,type,player_id")) {
+        return;
+      }
+
+      // Normalizar
+      line = line.toLowerCase();
+
+      // Reemplazar separadores por espacios (para poder usar StringTokenizer)
+      line = line.replaceAll("[^a-z0-9]+", " ");
+
+      // Tokenizar en palabras
+      StringTokenizer itr = new StringTokenizer(line);
+
+      while (itr.hasMoreTokens()) {
+        String token = itr.nextToken();
+
+        // Clave: "fichero \t palabra"
+        wordKey.set(fileName + "\t" + token);
+        context.write(wordKey, one);
+      }
     }
   }
-}
 
-public static class IntSumReducer extends Reducer < Text, IntWritable, Text, IntWritable > {
+  public static class IntSumReducer extends Reducer < Text, IntWritable, Text, IntWritable > {
 
-  private IntWritable result = new IntWritable();
+    private IntWritable result = new IntWritable();
 
-  // MapReduce invocará a este método una vez por cada empresa, 
-  // pasando como parámetro todos los valores asociados generados en map.
-  public void reduce(Text key, Iterable values, Context context) throws IOException,
-  InterruptedException {
-    int sum = 0;
+    // MapReduce invocará a este método una vez por cada clave,
+    // pasando todos los valores asociados generados en map.
+    public void reduce(Text key, Iterable < IntWritable > values, Context context)
+    throws IOException,
+    InterruptedException {
 
-    // Simplemente sumamos los valores, y la suma será el resultado de esa empresa
-    for (IntWritable val: values) {
-      sum += val.get();
+      int sum = 0;
+      for (IntWritable val: values) {
+        sum += val.get();
+      }
+      result.set(sum);
+      context.write(key, result);
     }
-    result.set(sum);
-    context.write(key, result);
   }
-}
 
-public static void main(String[] args) throws Exception {
-  Configuration conf = new Configuration();
-  Job job = Job.getInstance(conf, "QuotationAnalyzer");
-  job.setJarByClass(QuotationAnalyzer.class);
-  job.setMapperClass(IncreaseQuotationFilterMapper.class);
-  job.setCombinerClass(IntSumReducer.class);
-  job.setReducerClass(IntSumReducer.class);
-  job.setOutputKeyClass(Text.class);
-  job.setOutputValueClass(IntWritable.class);
-  FileInputFormat.addInputPath(job, new Path(args[0]));
-  FileOutputFormat.setOutputPath(job, new Path(args[1]));
-  System.exit(job.waitForCompletion(true) ? 0 : 1);
-}
+  public static void main(String[] args) throws Exception {
+    Configuration conf = new Configuration();
+    Job job = Job.getInstance(conf, "WordCountByFile");
+
+    job.setJarByClass(WordCountByFile.class);
+    job.setMapperClass(WordCountMapper.class);
+    job.setCombinerClass(IntSumReducer.class);
+    job.setReducerClass(IntSumReducer.class);
+
+    job.setOutputKeyClass(Text.class);
+    job.setOutputValueClass(IntWritable.class);
+
+    FileInputFormat.addInputPath(job, new Path(args[0]));
+    FileOutputFormat.setOutputPath(job, new Path(args[1]));
+
+    System.exit(job.waitForCompletion(true) ? 0 : 1);
+  }
 }
